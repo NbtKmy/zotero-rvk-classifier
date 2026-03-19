@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body {
+      font-family: -apple-system, sans-serif;
+      font-size: 13px;
+      padding: 12px 16px;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+      gap: 8px;
+    }
+    label {
+      width: 90px;
+      flex-shrink: 0;
+      color: #333;
+    }
+    input[type="text"],
+    input[type="password"],
+    select {
+      flex: 1;
+      padding: 4px 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    button {
+      padding: 4px 10px;
+      font-size: 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #f5f5f5;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button:hover { background: #e8e8e8; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #model-status {
+      font-size: 11px;
+      color: #888;
+      margin-left: 2px;
+    }
+    #model-status.error { color: #c00; }
+    .section-title {
+      font-weight: bold;
+      margin: 4px 0 10px 0;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+  <div class="section-title">LLM Settings</div>
+
+  <div class="row">
+    <label for="base-url">Base URL</label>
+    <input type="text" id="base-url" placeholder="http://localhost:11434/v1" />
+  </div>
+
+  <div class="row">
+    <label for="api-key">API Key</label>
+    <input type="password" id="api-key" placeholder="(optional)" />
+  </div>
+
+  <div class="row">
+    <label for="model-select">Model</label>
+    <select id="model-select"></select>
+    <input type="text" id="model-manual" placeholder="or type manually" style="max-width:160px" />
+    <button id="fetch-btn">Fetch models</button>
+  </div>
+  <div class="row" style="margin-top:-6px; padding-left:98px;">
+    <span id="model-status"></span>
+  </div>
+
+  <script src="prefs.js"></script>
+</body>
+</html>

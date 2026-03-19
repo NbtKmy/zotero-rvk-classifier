@@ -1,0 +1,14 @@
+{
+  "name": "zotero-rvk-classifier",
+  "version": "0.1.0",
+  "description": "Predict RVK classification notations for books using an LLM",
+  "scripts": {
+    "build": "tsc && node build.mjs",
+    "build:watch": "node build.mjs --watch",
+    "zip": "node zip.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  }
+}

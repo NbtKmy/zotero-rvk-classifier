@@ -1,0 +1,40 @@
+<vbox id="rvk-classifier-prefs"
+      onload="Zotero_RVKPrefs.init()"
+      xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml">
+  <vbox class="main-section">
+    <groupbox>
+      <label><html:h2>LLM Settings</html:h2></label>
+
+      <hbox align="center" style="margin-bottom:6px">
+        <label value="Base URL" style="min-width:80px"/>
+        <html:input id="rvk-base-url" type="text"
+          placeholder="http://localhost:11434/v1"
+          preference="extensions.zotero-rvk-classifier.ai.baseUrl"
+          style="flex:1"/>
+      </hbox>
+
+      <hbox align="center" style="margin-bottom:6px">
+        <label value="API Key" style="min-width:80px"/>
+        <html:input id="rvk-api-key" type="password"
+          placeholder="(optional)"
+          preference="extensions.zotero-rvk-classifier.ai.apiKey"
+          style="flex:1"/>
+      </hbox>
+
+      <hbox align="center" style="margin-bottom:6px">
+        <label value="Model" style="min-width:80px"/>
+        <html:input id="rvk-model" type="text"
+          placeholder="llama3.2"
+          preference="extensions.zotero-rvk-classifier.ai.model"
+          style="flex:1"/>
+        <button id="rvk-fetch-btn" label="Fetch models"
+          oncommand="Zotero_RVKPrefs.fetchModels()"/>
+      </hbox>
+
+      <hbox style="padding-left:88px">
+        <label id="rvk-model-status" value=""/>
+      </hbox>
+    </groupbox>
+  </vbox>
+</vbox>
