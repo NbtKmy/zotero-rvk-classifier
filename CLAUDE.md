@@ -504,6 +504,110 @@ Key modules: `ExtraFieldTool`, `ProgressWindowHelper`, `DialogHelper`, `MenuMana
 - Add Zotero types from the template's `typings/` directory
 - Target: `ES2020`
 
+---
+
+## Known Pitfalls (lessons learned)
+
+### bootstrap.js
+
+**`onMainWindowLoad` receives `{ window: win }`, not `win` directly**
+```javascript
+// WRONG
+function onMainWindowLoad(win) { ... }
+
+// CORRECT
+function onMainWindowLoad({ window: win }) { ... }
+```
+
+**Script path must point to the build output**
+```javascript
+// WRONG — src/index.js does not exist
+Services.scriptloader.loadSubScript(`${rootURI}src/index.js`);
+
+// CORRECT
+Services.scriptloader.loadSubScript(`${rootURI}addon/content/index.js`);
+```
+
+**Register menus after `Zotero.initializationPromise`**
+When a plugin is installed while Zotero is already running, `onMainWindowLoad` is NOT called for the existing window. Always also register inside `initializationPromise.then()`:
+```javascript
+Zotero.initializationPromise.then(() => {
+  const win = Services.wm.getMostRecentWindow("navigator:browser");
+  if (win) addon.onMainWindowLoad(win);
+});
+```
+
+### esbuild / bundling
+
+**Do not use `globalName` with IIFE format**
+`globalName: "Foo"` creates `var Foo = (() => { ... })()`. Since the IIFE returns `undefined`, the outer `var` overwrites `globalThis.Foo` that was set inside. Remove `globalName` and rely on the explicit `globalThis.MyClass = MyClass` assignment at the end of the bundle.
+
+### Context menu
+
+**`Zotero.MenuManager` is NOT a native Zotero API** — it is part of `zotero-plugin-toolkit`. Without that package, use direct DOM manipulation:
+```javascript
+const itemmenu = doc.getElementById("zotero-itemmenu");
+const menuitem = doc.createXULElement("menuitem");
+menuitem.setAttribute("label", "My Action");
+menuitem.addEventListener("command", () => { /* ... */ });
+itemmenu.appendChild(menuitem);
+```
+Clean up in `onMainWindowUnload`: `doc.getElementById(menuID)?.remove()`.
+
+### Preference pane
+
+**`src` is loaded as an XUL fragment, not a full HTML document**
+`Zotero.PreferencePanes.register` reads `src` as a text string with `Zotero.File.getContentsFromURL()` and injects it into the preferences page as a XUL fragment. Do NOT pass a full HTML document.
+
+**`scripts` are loaded before the fragment is inserted into the DOM**
+Do not access DOM elements at the top level of a pref script. Use:
+- `preference="extensions.plugin-id.key"` attribute on inputs for automatic pref sync (no JS needed)
+- `onload="MyPrefs.init()"` on the root element for post-insert initialization
+- `oncommand="MyPrefs.doSomething()"` on buttons
+
+```javascript
+// prefs.js — loaded before DOM insertion, so define functions only
+var MyPrefs = {
+  init() { /* DOM is ready here */ },
+  doSomething() { /* called by oncommand */ },
+};
+```
+
+### HTTP requests
+
+**`fetch()` is blocked in Zotero's chrome context** — use `Zotero.HTTP.request()` instead:
+```javascript
+// WRONG — fetch() fails silently (CORS/CSP blocked)
+const res = await fetch(url);
+
+// CORRECT
+const resp = await Zotero.HTTP.request("GET", url, { timeout: 5000 });
+// resp.status, resp.responseText
+
+// POST example
+const resp = await Zotero.HTTP.request("POST", url, {
+  timeout: 0,  // 0 = no timeout (useful for LLM calls)
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(data),
+});
+```
+
+### XML parsing (MARCXML)
+
+**`querySelectorAll` is unreliable with default-namespace XML in Gecko**
+Use `getElementsByTagNameNS("*", localName)` instead:
+```javascript
+// WRONG — may return 0 results for namespaced XML
+doc.querySelectorAll('datafield[tag="084"]')
+
+// CORRECT
+const fields = doc.getElementsByTagNameNS("*", "datafield");
+for (const field of Array.from(fields)) {
+  if (field.getAttribute("tag") !== "084") continue;
+  // ...
+}
+```
+
 
 <claude-mem-context>
 # Recent Activity

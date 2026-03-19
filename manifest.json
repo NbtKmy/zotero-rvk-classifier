@@ -9,7 +9,7 @@
       "id": "zotero-rvk-classifier@nbtkmy.org",
       "strict_min_version": "7.0",
       "strict_max_version": "7.0.*",
-      "update_url": "https://example.com/update.json"
+      "update_url": "https://raw.githubusercontent.com/NbtKmy/zotero-rvk-classifier/main/update.json"
     }
   }
 }

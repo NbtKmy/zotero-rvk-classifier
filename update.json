@@ -1,0 +1,17 @@
+{
+  "addons": {
+    "zotero-rvk-classifier@nbtkmy.org": {
+      "updates": [
+        {
+          "version": "1.0.0",
+          "update_link": "https://github.com/NbtKmy/zotero-rvk-classifier/releases/download/v1.0.0/zotero-rvk-classifier-1.0.0.xpi",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "7.0"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
