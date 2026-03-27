@@ -275,11 +275,81 @@ ${line}` : line;
         label: "RVK Classifier",
         scripts: ["addon/content/prefs.js"]
       });
+      const candidatesRef = this._candidates;
+      const rootURI = this.rootURI;
+      let doRefresh = null;
+      try {
+        Zotero.ItemPaneManager.registerSection({
+          paneID: "rvk-classifier-candidates",
+          pluginID: PLUGIN_ID,
+          header: {
+            l10nID: "rvk-classifier-section-header",
+            icon: `${rootURI}addon/content/icons/rvk.svg`
+          },
+          sidenav: {
+            l10nID: "rvk-classifier-section-sidenav",
+            icon: `${rootURI}addon/content/icons/rvk.svg`
+          },
+          onInit: ({ refresh }) => {
+            doRefresh = refresh;
+            void refresh();
+          },
+          onItemChange: ({ item, setEnabled, setSectionSummary }) => {
+            const extra = item?.getField("extra") ?? "";
+            const hasResult = extra.includes(`${rvkClassifier.extraKey}:`);
+            setEnabled(hasResult);
+            if (hasResult) {
+              const escapedKey = rvkClassifier.extraKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const match = extra.match(new RegExp(`^${escapedKey}:\\s*(.+)$`, "m"));
+              setSectionSummary(match?.[1]?.trim() ?? "");
+              void doRefresh?.();
+            }
+          },
+          onRender: ({ body, item }) => {
+            const cs = body.closest?.("collapsible-section");
+            if (cs && !cs.hasAttribute("open"))
+              cs.setAttribute("open", "");
+            const doc = body.ownerDocument;
+            while (body.firstChild)
+              body.removeChild(body.firstChild);
+            const extra = item?.getField("extra") ?? "";
+            const escapedKey = rvkClassifier.extraKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const match = extra.match(new RegExp(`^${escapedKey}:\\s*(.+)$`, "m"));
+            const selected = match?.[1]?.trim() ?? "";
+            const itemId = item?.id;
+            const candidates = itemId != null ? candidatesRef.get(itemId) ?? [] : [];
+            if (candidates.length > 0) {
+              const heading = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+              heading.textContent = `Candidates (${candidates.length}):`;
+              heading.setAttribute("style", "font-weight:bold;font-size:0.85em;color:#555;margin-bottom:4px;");
+              body.appendChild(heading);
+              const tags = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+              tags.setAttribute("style", "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;");
+              for (const n of candidates) {
+                const chip = doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
+                chip.textContent = n;
+                chip.setAttribute("style", "background:#e8e8e8;border-radius:3px;padding:1px 5px;font-family:monospace;font-size:0.85em;");
+                tags.appendChild(chip);
+              }
+              body.appendChild(tags);
+            }
+            if (selected) {
+              const sel = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+              sel.setAttribute("style", "font-family:monospace;font-size:0.9em;");
+              sel.textContent = `Selected: ${selected}`;
+              body.appendChild(sel);
+            }
+          }
+        });
+      } catch (e) {
+        Zotero.log?.(`[rvk-classifier] registerSection failed: ${e}`);
+      }
     }
     shutdown() {
       this._candidates.clear();
     }
     onMainWindowLoad(win) {
+      win.MozXULElement?.insertFTLIfNeeded?.("zotero-rvk-classifier.ftl");
       const doc = win.document;
       if (doc.readyState === "complete") {
         this._registerMenus(doc);

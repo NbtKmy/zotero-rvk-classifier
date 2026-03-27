@@ -1,7 +1,17 @@
 var addon;
+var chromeHandle;
 
 function startup({ id, version, rootURI }, reason) {
   try {
+    var aomStartup = Cc["@mozilla.org/addons/addon-manager-startup;1"]
+      .getService(Ci.amIAddonManagerStartup);
+    chromeHandle = aomStartup.registerChrome(
+      Services.io.newURI(rootURI + "manifest.json"),
+      [
+        ["content", "zotero-rvk-classifier", rootURI + "addon/content/"],
+        ["locale",  "zotero-rvk-classifier", "en-US", rootURI + "locale/en-US/"],
+      ]
+    );
     Services.scriptloader.loadSubScript(`${rootURI}addon/content/index.js`);
     addon = new ZoteroRVKClassifier(rootURI);
     addon.startup();
@@ -22,6 +32,8 @@ function shutdown({ id, version, rootURI }, reason) {
     if (win) addon?.onMainWindowUnload(win);
     addon?.shutdown();
     addon = undefined;
+    chromeHandle?.destruct?.();
+    chromeHandle = undefined;
   } catch (e) {
     Zotero.log("zotero-rvk-classifier shutdown error: " + e);
   }
