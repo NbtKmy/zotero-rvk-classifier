@@ -36,5 +36,21 @@
         <label id="rvk-model-status" value=""/>
       </hbox>
     </groupbox>
+    <groupbox>
+      <label><html:h2>Reranking Prompt</html:h2></label>
+
+      <description style="margin-bottom:4px; color:GrayText; font-size:0.9em;">
+        These lines are always sent to the model and cannot be changed:
+      </description>
+      <html:div style="background:#f4f4f4; border:1px solid #ccc; border-radius:4px; padding:8px 10px; font-size:0.85em; color:#666; margin-bottom:10px; font-family:monospace;">
+        <html:div>Select and rank the 3 most appropriate RVK notations for the following book.</html:div>
+        <html:div>Return ONLY the 3 notations separated by " | " with no other text.</html:div>
+      </html:div>
+
+      <description style="margin-bottom:4px;">Additional instructions (optional):</description>
+      <html:textarea id="rvk-extra-instructions"
+        placeholder="e.g. Prefer notations from the LB (Volkskunde) range when the topic is relevant."
+        style="width:100%; height:72px; font-family:monospace; font-size:0.9em; resize:vertical; box-sizing:border-box;"/>
+    </groupbox>
   </vbox>
 </vbox>

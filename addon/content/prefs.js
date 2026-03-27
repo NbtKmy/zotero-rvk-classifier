@@ -3,20 +3,27 @@
  * Use onload/oncommand handlers instead. */
 
 var Zotero_RVKPrefs = {
+  PREF_BASE: "extensions.zotero-rvk-classifier",
+
   init() {
     // Called after the pane fragment is inserted into the DOM (onload event on root vbox).
-    // DOM elements are accessible here.
+    const textarea = document.getElementById("rvk-extra-instructions");
+    if (textarea) {
+      textarea.value = Zotero.Prefs.get(`${this.PREF_BASE}.rerank.extraInstructions`, true) || "";
+      textarea.addEventListener("input", () => {
+        Zotero.Prefs.set(`${this.PREF_BASE}.rerank.extraInstructions`, textarea.value, true);
+      });
+    }
   },
 
   async fetchModels() {
     const $ = (id) => document.getElementById(id);
-    const PREF_BASE = "extensions.zotero-rvk-classifier";
 
     const baseUrl = $("rvk-base-url").value.trim()
-      || Zotero.Prefs.get(`${PREF_BASE}.ai.baseUrl`, true)
+      || Zotero.Prefs.get(`${this.PREF_BASE}.ai.baseUrl`, true)
       || "http://localhost:11434/v1";
     const apiKey = $("rvk-api-key").value.trim()
-      || Zotero.Prefs.get(`${PREF_BASE}.ai.apiKey`, true)
+      || Zotero.Prefs.get(`${this.PREF_BASE}.ai.apiKey`, true)
       || "";
 
     const btn    = $("rvk-fetch-btn");

@@ -5,7 +5,7 @@ import { predict } from "./pipeline";
 import { setExtraField } from "./extra";
 import { Classifier, BookMetadata, LLMConfig } from "./types";
 
-const PLUGIN_ID = "zotero-rvk-classifier@zotero.org";
+const PLUGIN_ID = "zotero-rvk-classifier@nbtkmy.org";
 const PREF_BASE = "extensions.zotero-rvk-classifier";
 
 // All registered classifiers. Add new classifiers here in the future.
@@ -13,6 +13,7 @@ const CLASSIFIERS: Classifier[] = [rvkClassifier];
 
 class ZoteroRVKClassifier {
   private rootURI: string;
+  private _candidates = new Map<number, string[]>();
 
   constructor(rootURI: string) {
     this.rootURI = rootURI;
@@ -25,10 +26,11 @@ class ZoteroRVKClassifier {
       label: "RVK Classifier",
       scripts: ["addon/content/prefs.js"],
     });
+
   }
 
   shutdown(): void {
-    // nothing to clean up (menu cleanup handled by Zotero via pluginID)
+    this._candidates.clear();
   }
 
   onMainWindowLoad(win: Window): void {
@@ -82,6 +84,7 @@ class ZoteroRVKClassifier {
     if (items.length === 0) return;
 
     const llmConfig = this.getLLMConfig();
+    const rerankExtra = (Zotero.Prefs.get(`${PREF_BASE}.rerank.extraInstructions`, true) as string || "").trim() || undefined;
     const progress = new Zotero.ProgressWindow({ closeOnClick: false });
     progress.changeHeadline(`RVK Classifier — ${classifier.label}`);
     progress.addLines([`Processing ${items.length} item(s)…`], [""]);
@@ -93,9 +96,10 @@ class ZoteroRVKClassifier {
 
     for (const item of items) {
       const meta = extractMetadata(item);
-      const result = await predict(classifier, meta, llmConfig);
+      const result = await predict(classifier, meta, llmConfig, rerankExtra);
 
       if (result.status === "ok") {
+        this._candidates.set((item as unknown as { id: number }).id, result.candidates);
         setExtraField(item, classifier.extraKey, result.notations.join(" | "));
         await item.saveTx();
         success++;
@@ -130,11 +134,15 @@ function extractMetadata(item: ZoteroItem): BookMetadata {
     .filter(Boolean);
   const tags = item.getTags().map((t: { tag: string }) => t.tag);
 
+  const rawAbstract = (item.getField("abstractNote") || "").trim();
+  const abstract = rawAbstract ? rawAbstract.slice(0, 600) : undefined;
+
   return {
     title: item.getField("title"),
     authors,
     tags,
     isbn: isbn || undefined,
+    abstract,
   };
 }
 

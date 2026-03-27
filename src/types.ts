@@ -3,6 +3,7 @@ export interface BookMetadata {
   authors: string[];
   tags: string[];
   isbn?: string;
+  abstract?: string;
 }
 
 export interface EnrichedCandidate {
@@ -18,7 +19,7 @@ export interface Classifier {
   extractFromMARC(xml: string): string[];
   enrichCandidates(notations: string[]): Promise<EnrichedCandidate[]>;
   keywordPrompt(meta: BookMetadata): string;
-  rerankPrompt(meta: BookMetadata, candidates: EnrichedCandidate[]): string;
+  rerankPrompt(meta: BookMetadata, candidates: EnrichedCandidate[], extraInstructions?: string): string;
   validate(notation: string): boolean;
 }
 

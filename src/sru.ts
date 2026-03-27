@@ -30,6 +30,11 @@ const SRU_SOURCES: { name: string; field: string; base: string }[] = [
     field: "pica.isb",
     base: "https://sru.k10plus.de/opac-de-627?version=1.1&operation=searchRetrieve&recordSchema=marcxml",
   },
+  {
+    name: "HEBIS",
+    field: "marcxml.isbn",
+    base: "http://sru.hebis.de/sru/DB=2.1?version=1.1&operation=searchRetrieve&recordSchema=marc21&startRecord=1&recordPacking=xml",
+  },
 ];
 
 const MAX_RECORDS = 10;

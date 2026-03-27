@@ -31,6 +31,18 @@ export type ZoteroType = {
   PreferencePanes: {
     register(opts: { pluginID: string; src: string; label: string; image?: string; scripts?: string[]; stylesheets?: string[] }): void;
   };
+  ItemPaneManager: {
+    registerSection(opts: {
+      paneID: string;
+      pluginID: string;
+      header: { l10nID: string; icon: string; darkIcon?: string };
+      sidenav: { l10nID: string; icon: string; darkIcon?: string };
+      onItemChange?: (props: { item: ZoteroItem | null; setEnabled: (v: boolean) => void }) => void;
+      onRender?: (props: { body: HTMLElement; doc: Document; item: ZoteroItem | null }) => void;
+      onAsyncRender?: (props: { body: HTMLElement; doc: Document; item: ZoteroItem | null }) => Promise<void>;
+      onDestroy?: (props: Record<string, unknown>) => void;
+    }): void;
+  };
   log?: (msg: string) => void;
 };
 

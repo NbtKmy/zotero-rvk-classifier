@@ -31,6 +31,11 @@
       name: "K10PLUS",
       field: "pica.isb",
       base: "https://sru.k10plus.de/opac-de-627?version=1.1&operation=searchRetrieve&recordSchema=marcxml"
+    },
+    {
+      name: "HEBIS",
+      field: "marcxml.isbn",
+      base: "http://sru.hebis.de/sru/DB=2.1?version=1.1&operation=searchRetrieve&recordSchema=marc21&startRecord=1&recordPacking=xml"
     }
   ];
   var MAX_RECORDS = 10;
@@ -97,7 +102,7 @@
       const parser = new DOMParser();
       const doc = parser.parseFromString(xml, "application/xml");
       const notations = [];
-      for (const node of Array.from(doc.querySelectorAll("node"))) {
+      for (const node of Array.from(doc.getElementsByTagNameNS("*", "node"))) {
         const n = node.getAttribute("notation");
         if (n && !n.includes("-")) {
           notations.push(n.trim());
@@ -116,35 +121,46 @@
       return extractRVKFromMARC(xml);
     },
     async enrichCandidates(notations) {
-      const unique = [...new Set(notations)].slice(0, 30);
+      const normalized = notations.map(
+        (n) => n.trim().toUpperCase().replace(/\s+/, " ")
+      );
+      const unique = [...new Set(normalized)].slice(0, 30);
       return Promise.all(unique.map(fetchNodeDetail));
     },
     keywordPrompt(meta) {
-      return [
+      const lines = [
         "Generate 3 to 5 German keywords suitable for searching the RVK (Regensburger Verbundklassifikation) classification system for the following book.",
         'Return ONLY the keywords separated by " | " with no other text.',
         "",
         `Title: ${meta.title}`,
         `Author: ${meta.authors.join(", ")}`,
         `Tags: ${meta.tags.join(", ")}`
-      ].join("\n");
+      ];
+      if (meta.abstract)
+        lines.push(`Abstract: ${meta.abstract}`);
+      return lines.join("\n");
     },
-    rerankPrompt(meta, candidates) {
+    rerankPrompt(meta, candidates, extraInstructions) {
       const candidateLines = candidates.map((c) => {
         const terms = c.terms.length ? ` [${c.terms.join(", ")}]` : "";
         return `- ${c.notation}: ${c.label}${terms}`;
       }).join("\n");
-      return [
+      const lines = [
         "Select and rank the 3 most appropriate RVK notations for the following book.",
-        'Return ONLY the 3 notations separated by " | " with no other text.',
+        'Return ONLY the 3 notations separated by " | " with no other text.'
+      ];
+      if (extraInstructions)
+        lines.push(extraInstructions);
+      lines.push(
         "",
         `Title: ${meta.title}`,
         `Author: ${meta.authors.join(", ")}`,
-        `Tags: ${meta.tags.join(", ")}`,
-        "",
-        "Candidates:",
-        candidateLines
-      ].join("\n");
+        `Tags: ${meta.tags.join(", ")}`
+      );
+      if (meta.abstract)
+        lines.push(`Abstract: ${meta.abstract}`);
+      lines.push("", "Candidates:", candidateLines);
+      return lines.join("\n");
     },
     validate(notation) {
       return /^[A-Z]{2}\s+\S+$/.test(notation.trim());
@@ -178,7 +194,7 @@ ${resp.responseText?.slice(0, 200) ?? ""}`
 
   // src/pipeline.ts
   var SYSTEM_PROMPT = "You are a library classification expert specializing in the Regensburger Verbundklassifikation (RVK) system.";
-  async function predict(classifier, meta, llmConfig) {
+  async function predict(classifier, meta, llmConfig, rerankExtraInstructions) {
     const log = (msg) => Zotero.log?.(`[rvk-classifier] ${msg}`);
     try {
       let rawCandidates = [];
@@ -216,7 +232,7 @@ ${resp.responseText?.slice(0, 200) ?? ""}`
       log(`Enriched ${enriched.length} candidates`);
       const rerankResponse = await chatCompletion(llmConfig, [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: classifier.rerankPrompt(meta, enriched) }
+        { role: "user", content: classifier.rerankPrompt(meta, enriched, rerankExtraInstructions) }
       ]);
       log(`LLM rerank response: ${rerankResponse}`);
       const notations = rerankResponse.split("|").map((n) => n.trim()).filter((n) => classifier.validate(n)).slice(0, 3);
@@ -224,7 +240,7 @@ ${resp.responseText?.slice(0, 200) ?? ""}`
       if (notations.length === 0) {
         return { status: "no_result" };
       }
-      return { status: "ok", notations };
+      return { status: "ok", notations, candidates: enriched.map((c) => c.notation) };
     } catch (e) {
       return { status: "error", message: String(e) };
     }
@@ -244,11 +260,12 @@ ${line}` : line;
   }
 
   // src/index.ts
-  var PLUGIN_ID = "zotero-rvk-classifier@zotero.org";
+  var PLUGIN_ID = "zotero-rvk-classifier@nbtkmy.org";
   var PREF_BASE = "extensions.zotero-rvk-classifier";
   var CLASSIFIERS = [rvkClassifier];
   var ZoteroRVKClassifier = class {
     constructor(rootURI) {
+      this._candidates = /* @__PURE__ */ new Map();
       this.rootURI = rootURI;
     }
     startup() {
@@ -260,6 +277,7 @@ ${line}` : line;
       });
     }
     shutdown() {
+      this._candidates.clear();
     }
     onMainWindowLoad(win) {
       const doc = win.document;
@@ -301,6 +319,7 @@ ${line}` : line;
       if (items.length === 0)
         return;
       const llmConfig = this.getLLMConfig();
+      const rerankExtra = (Zotero.Prefs.get(`${PREF_BASE}.rerank.extraInstructions`, true) || "").trim() || void 0;
       const progress = new Zotero.ProgressWindow({ closeOnClick: false });
       progress.changeHeadline(`RVK Classifier \u2014 ${classifier.label}`);
       progress.addLines([`Processing ${items.length} item(s)\u2026`], [""]);
@@ -310,8 +329,9 @@ ${line}` : line;
       let skipped = 0;
       for (const item of items) {
         const meta = extractMetadata(item);
-        const result = await predict(classifier, meta, llmConfig);
+        const result = await predict(classifier, meta, llmConfig, rerankExtra);
         if (result.status === "ok") {
+          this._candidates.set(item.id, result.candidates);
           setExtraField(item, classifier.extraKey, result.notations.join(" | "));
           await item.saveTx();
           success++;
@@ -339,11 +359,14 @@ ${line}` : line;
       (c) => [c.firstName, c.lastName].filter(Boolean).join(" ")
     ).filter(Boolean);
     const tags = item.getTags().map((t) => t.tag);
+    const rawAbstract = (item.getField("abstractNote") || "").trim();
+    const abstract = rawAbstract ? rawAbstract.slice(0, 600) : void 0;
     return {
       title: item.getField("title"),
       authors,
       tags,
-      isbn: isbn || void 0
+      isbn: isbn || void 0,
+      abstract
     };
   }
   globalThis.ZoteroRVKClassifier = ZoteroRVKClassifier;

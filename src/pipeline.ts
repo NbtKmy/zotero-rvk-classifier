@@ -7,14 +7,15 @@ const SYSTEM_PROMPT =
   "You are a library classification expert specializing in the Regensburger Verbundklassifikation (RVK) system.";
 
 export type PredictionResult =
-  | { status: "ok"; notations: string[] }
+  | { status: "ok"; notations: string[]; candidates: string[] }
   | { status: "no_result" }
   | { status: "error"; message: string };
 
 export async function predict(
   classifier: Classifier,
   meta: BookMetadata,
-  llmConfig: LLMConfig
+  llmConfig: LLMConfig,
+  rerankExtraInstructions?: string
 ): Promise<PredictionResult> {
   const log = (msg: string) => Zotero.log?.(`[rvk-classifier] ${msg}`);
 
@@ -69,7 +70,7 @@ export async function predict(
     // --- Step 3: LLM re-rank ---
     const rerankResponse = await chatCompletion(llmConfig, [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: classifier.rerankPrompt(meta, enriched) },
+      { role: "user", content: classifier.rerankPrompt(meta, enriched, rerankExtraInstructions) },
     ]);
     log(`LLM rerank response: ${rerankResponse}`);
 
@@ -84,7 +85,7 @@ export async function predict(
       return { status: "no_result" };
     }
 
-    return { status: "ok", notations };
+    return { status: "ok", notations, candidates: enriched.map((c) => c.notation) };
   } catch (e) {
     return { status: "error", message: String(e) };
   }
