@@ -592,75 +592,68 @@ const resp = await Zotero.HTTP.request("POST", url, {
 });
 ```
 
-### ItemPaneManager.registerSection — デバッグ記録
+### ItemPaneManager.registerSection — 解決済み
 
-`registerSection()` でアイテムパネルにカスタムセクションを追加する機能を実装したが、セクションのヘッダーは表示されるのにボディが空のまま（展開矢印も出ない）という問題が発生した。以下に試したこと・わかったことをまとめる。
+#### 根本原因
 
-#### 確認済みの事実
+`onRender` に渡される `body` 参照が常にデタッチされている問題。
 
-- **`onRender` は呼ばれている** — 以前 `console.log` を置いたとき "ItemPaneSectionAPI: Error in execution of onRender" が出たことで確認済み
-- **`body` 要素は実在する** — `collapsible-section` 内の `[data-type="body"]` 要素
-- **`console` は XUL コンテキストで未定義** — `console.log` / `console.error` は使えない。`Zotero.log?.()` を使うこと
-- **`createElement("div")` は XUL 要素を生成する** — HTML 要素が必要なら `createElementNS("http://www.w3.org/1999/xhtml", "div")` を使うこと
-- **`registerSection()` は `startup()` 内で同期的に呼ぶ** — `initializationPromise.then()` 内で呼ぶと表示が極端に遅くなり `onItemChange`/`onRender` が既存アイテムに対して呼ばれない
-- **`bodyXHTML` のルート要素は `<div>` (XUL 名前空間)** — `<html:div xmlns:html="...">` をルートにすると `MozXULElement.parseXULToFragment()` が失敗してセクション全体が壊れる
-- **セクションのデフォルトは open=true** — `_restoreOpenState()` がプレフ未設定なら `true` を返す
+**原因**: Zotero の `XULElementBase.disconnectedCallback()` が `replaceChildren()` を呼び出し、`collapsible-section` の Light DOM 子要素（`[data-type="body"]` div）を削除する。`ItemPaneCustomSection` が保持している `this._body` 参照がこの削除後も古いデタッチ済み要素を指したまま `onRender` に渡される。
 
-#### 試したが効果がなかったこと
+#### 判明した DOM 構造
 
-1. `bodyXHTML` でプレースホルダー要素を定義して `onRender` で `querySelector` で取得 → bodyXHTML のパースが失敗してセクション破壊
-2. `body.textContent = "test"` の単純なテキスト代入 → 表示されなかった
-3. `setSectionSummary()` でヘッダー下にサマリーテキストを出す → 出なかった
-4. `onItemChange` から `doRefresh?.()` を呼んで再レンダー → 効果なし（おそらくタイミング問題か、hidden 状態のまま）
-
-#### 現在のコード状態（`src/index.ts`）
-
-`onRender` 内の冒頭で以下を追加してある（最後に試した対策）：
-```typescript
-const cs = (body as Element).closest?.("collapsible-section");
-if (cs && !cs.hasAttribute("open")) cs.setAttribute("open", "");
 ```
-→ **これが効いたかどうかまだ未確認**（ユーザーが就寝のため）
-
-#### 次回試すべきこと（優先順）
-
-**① まず上記の `setAttribute("open", "")` fix を確認**
-- 分類済みの本を選択 → "RVK Classification" セクションにコンテンツが出るか確認
-
-**② 効かなかった場合 — `onRender` が本当に呼ばれているか再確認**
-```typescript
-onRender: ({ body, item }) => {
-  Zotero.log?.("[rvk-classifier] onRender called, item=" + (item ? "yes" : "null"));
-  body.setAttribute("style", "background:red;min-height:30px;");
-  // 赤いボックスが出れば onRender は動いている
-```
-→ Error Console で `[rvk-classifier] onRender called` を確認。赤いボックスが出れば body は visible。
-
-**③ 赤いボックスも出ない場合 — `setEnabled` の動作を疑う**
-
-`setEnabled(false)` → `setEnabled(true)` のトグル後、セクションが visible になっても `onRender` が呼ばれていない可能性。
-対策: `onItemChange` で `setEnabled` を呼ばず、常に enabled のまま（全アイテムで表示）にして `onRender` が呼ばれるか確認する：
-```typescript
-onItemChange: ({ item, setEnabled, setSectionSummary }) => {
-  setEnabled(true); // 常にtrue — テスト用
-  // ...
-},
+item-pane-custom-section[data-pane="..."]   ← getElementsByTagName で取得可能
+  ├─ collapsible-section                    ← closed shadow root でヘッダーを描画
+  │    └─ (Light DOM slot: body div)        ← onRender 後に消える
+  └─ html:style
 ```
 
-**④ Zotero の Browser Toolbox で DOM を直接確認する**
+- `collapsible-section.shadowRoot` は closed のため `null` を返す（Shadow DOM は存在する）
+- `childElementCount=0` = Light DOM が空 = body div が削除済み
+- ヘッダーが見えるのは closed shadow DOM が描画しているため
 
-Zotero 7 は Firefox ベースなので Browser Toolbox が使える：
-- Tools → Developer Tools → Browser Toolbox（または `Tools > Developer` 相当）
-- または Zotero を `--jsconsole` フラグ付きで起動
-- DOM インスペクターで `item-pane-custom-section[data-pane-id="rvk-classifier-candidates"]` を探し、
-  - `collapsible-section` に `open` 属性があるか
-  - `[data-type="body"]` 要素に子ノードがあるか
-  - CSS で `max-height: 0` になっていないか
-  を確認する
+#### 解決策（`onRender` 内で実施）
 
-**⑤ 抜本対策 — `registerSection` をやめて ProgressWindow で候補を表示**
+```typescript
+// body が detach されていたら DOM から live body を探す / 作る
+if (!body?.parentElement && ownerDoc) {
+  const allCustomSections = ownerDoc.getElementsByTagName("item-pane-custom-section");
+  let liveElem: Element | null = null;
+  for (let i = 0; i < allCustomSections.length; i++) {
+    const el = allCustomSections[i];
+    if (!paneID || el.getAttribute("data-pane") === paneID) { liveElem = el; break; }
+  }
+  if (liveElem) {
+    let liveBody = liveElem.querySelector?.('[data-type="body"]') as HTMLElement | null;
+    if (!liveBody) {
+      const csArr = liveElem.getElementsByTagName("collapsible-section");
+      if (csArr.length > 0) {
+        const cs = csArr[0];
+        liveBody = (cs.children?.[1] ?? null) as HTMLElement | null;
+        if (!liveBody) {
+          // Light DOM が空 → 新しい body div を作って slot に挿入
+          const newBody = ownerDoc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+          newBody.setAttribute("data-type", "body");
+          cs.appendChild(newBody);
+          if (!cs.hasAttribute("open")) cs.setAttribute("open", "");
+          cs.removeAttribute("empty");
+          liveBody = newBody;
+        }
+      }
+    }
+    if (liveBody) actualBody = liveBody;
+  }
+}
+```
 
-セクションが何度試しても動かないなら、候補リストの表示は ProgressWindow で行い（分類実行直後だけ表示）、Extra フィールドには top3 のみ書き込む現状維持にする。UI としては劣るが実用上は問題ない。
+#### その他の確認済みの注意点
+
+- **`console` は XUL コンテキストで未定義** — `Zotero.log?.()` を使うこと
+- **`createElement("div")` は XUL 要素を生成する** — HTML 要素は `createElementNS("http://www.w3.org/1999/xhtml", "div")` を使うこと
+- **`document` グローバルは IIFE バンドル内で未定義** — `body.ownerDocument` を使うこと
+- **`registerSection()` は `startup()` 内で同期的に呼ぶ** — `initializationPromise.then()` 内で呼ぶと遅延・コールバック未発火になる
+- **`querySelector` は XUL 名前空間 XML で不安定** — `getElementsByTagName` / `getElementsByTagNameNS` を優先すること
 
 ### XML parsing (MARCXML)
 

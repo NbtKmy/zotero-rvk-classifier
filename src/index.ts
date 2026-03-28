@@ -1,7 +1,7 @@
 import "./zotero"; // type stubs
 import type { ZoteroItem } from "./zotero";
 import { rvkClassifier } from "./classifiers/rvk";
-import { predict } from "./pipeline";
+import { predict, CandidateSources } from "./pipeline";
 import { setExtraField } from "./extra";
 import { Classifier, BookMetadata, LLMConfig } from "./types";
 
@@ -13,7 +13,7 @@ const CLASSIFIERS: Classifier[] = [rvkClassifier];
 
 class ZoteroRVKClassifier {
   private rootURI: string;
-  private _candidates = new Map<number, string[]>();
+  private _candidates = new Map<number, CandidateSources>();
 
   constructor(rootURI: string) {
     this.rootURI = rootURI;
@@ -30,8 +30,6 @@ class ZoteroRVKClassifier {
     const candidatesRef = this._candidates;
     const rootURI = this.rootURI;
 
-    let doRefresh: (() => Promise<void>) | null = null;
-
     try {
       Zotero.ItemPaneManager.registerSection({
         paneID: "rvk-classifier-candidates",
@@ -44,10 +42,6 @@ class ZoteroRVKClassifier {
           l10nID: "rvk-classifier-section-sidenav",
           icon: `${rootURI}addon/content/icons/rvk.svg`,
         },
-        onInit: ({ refresh }: { body: HTMLElement; item: ZoteroItem | null; refresh: () => Promise<void> }) => {
-          doRefresh = refresh;
-          void refresh();
-        },
         onItemChange: ({ item, setEnabled, setSectionSummary }: { item: ZoteroItem | null; setEnabled: (v: boolean) => void; setSectionSummary: (s: string) => void }) => {
           const extra = (item?.getField("extra") as string | undefined) ?? "";
           const hasResult = extra.includes(`${rvkClassifier.extraKey}:`);
@@ -56,44 +50,145 @@ class ZoteroRVKClassifier {
             const escapedKey = rvkClassifier.extraKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const match = extra.match(new RegExp(`^${escapedKey}:\\s*(.+)$`, "m"));
             setSectionSummary(match?.[1]?.trim() ?? "");
-            void doRefresh?.();
           }
         },
-        onRender: ({ body, item }: { body: HTMLElement; item: ZoteroItem | null }) => {
-          // Ensure the collapsible-section is open (body visible)
-          const cs = (body as Element).closest?.("collapsible-section");
-          if (cs && !cs.hasAttribute("open")) cs.setAttribute("open", "");
+        onRender: ({ paneID, body, item }: { paneID?: string; body: HTMLElement; item: ZoteroItem | null }) => {
+          // Use ownerDocument (not global document — unavailable in IIFE bundle context)
+          const ownerDoc = body?.ownerDocument;
 
-          const doc = body.ownerDocument;
-          while (body.firstChild) body.removeChild(body.firstChild);
+          // body passed by Zotero may be detached (disconnectedCallback clears light DOM children).
+          // Recover the live body from the DOM, or create a new one inside collapsible-section.
+          let actualBody: HTMLElement = body;
+          if (!body?.parentElement && ownerDoc) {
+            const allCustomSections = ownerDoc.getElementsByTagName("item-pane-custom-section");
+            let liveElem: Element | null = null;
+            for (let i = 0; i < allCustomSections.length; i++) {
+              const el = allCustomSections[i];
+              if (!paneID || el.getAttribute("data-pane") === paneID) {
+                liveElem = el;
+                break;
+              }
+            }
+
+            if (liveElem) {
+              // Try querySelector first (works once body has been inserted)
+              let liveBody = liveElem.querySelector?.('[data-type="body"]') as HTMLElement | null;
+
+              // If still missing, find collapsible-section and create the body div
+              if (!liveBody) {
+                const csArr = liveElem.getElementsByTagName("collapsible-section");
+                if (csArr.length > 0) {
+                  const cs = csArr[0];
+                  liveBody = (cs.children?.[1] ?? null) as HTMLElement | null;
+                  if (!liveBody) {
+                    // collapsible-section light DOM was cleared — recreate body slot child
+                    const newBody = ownerDoc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+                    newBody.setAttribute("data-type", "body");
+                    cs.appendChild(newBody);
+                    if (!cs.hasAttribute("open")) cs.setAttribute("open", "");
+                    cs.removeAttribute("empty");
+                    liveBody = newBody;
+                  }
+                }
+              }
+
+              if (liveBody) actualBody = liveBody;
+            }
+          }
+
+          const actualSection = actualBody.parentElement;
+          if (actualSection) {
+            actualSection.removeAttribute("empty");
+            if (!actualSection.hasAttribute("open")) {
+              actualSection.toggleAttribute("open", true);
+            }
+          }
+
+          const doc = actualBody.ownerDocument;
+          while (actualBody.firstChild) actualBody.removeChild(actualBody.firstChild);
+
+          // Inject stylesheet once per document for dark/light mode support
+          const styleId = "rvk-classifier-styles";
+          if (!doc.getElementById(styleId)) {
+            const style = doc.createElementNS("http://www.w3.org/1999/xhtml", "style");
+            style.id = styleId;
+            style.textContent = `
+              .rvk-chip {
+                background: #e0e0e0; color: #222;
+                border-radius: 3px; padding: 1px 6px;
+                font-family: monospace; font-size: 0.85em;
+              }
+              @media (prefers-color-scheme: dark) {
+                .rvk-chip { background: #4a4a4a; color: #e0e0e0; }
+              }
+              .rvk-group-label {
+                font-size: 0.8em; color: #666;
+                margin-top: 6px; margin-bottom: 2px;
+              }
+              @media (prefers-color-scheme: dark) {
+                .rvk-group-label { color: #aaa; }
+              }
+              .rvk-muted { color: #999; font-size: 0.85em; }
+              @media (prefers-color-scheme: dark) {
+                .rvk-muted { color: #777; }
+              }
+            `;
+            (doc.head ?? doc.documentElement)?.appendChild(style);
+          }
 
           const extra = (item?.getField("extra") as string | undefined) ?? "";
           const escapedKey = rvkClassifier.extraKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
           const match = extra.match(new RegExp(`^${escapedKey}:\\s*(.+)$`, "m"));
           const selected = match?.[1]?.trim() ?? "";
           const itemId = (item as unknown as { id: number } | null)?.id;
-          const candidates = itemId != null ? (candidatesRef.get(itemId) ?? []) : [];
+          const sources = itemId != null ? candidatesRef.get(itemId) : undefined;
 
-          if (candidates.length > 0) {
-            const heading = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-            heading.textContent = `Candidates (${candidates.length}):`;
-            heading.setAttribute("style", "font-weight:bold;font-size:0.85em;color:#555;margin-bottom:4px;");
-            body.appendChild(heading);
-            const tags = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-            tags.setAttribute("style", "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;");
-            for (const n of candidates) {
-              const chip = doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
-              chip.textContent = n;
-              chip.setAttribute("style", "background:#e8e8e8;border-radius:3px;padding:1px 5px;font-family:monospace;font-size:0.85em;");
-              tags.appendChild(chip);
+          const mkDiv = () => doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+          const mkSpan = () => doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
+
+          if (!sources) {
+            // Candidates not cached (e.g. after Zotero restart) — prompt re-run
+            const msg = mkDiv();
+            msg.textContent = "Run classification again to see other candidates.";
+            msg.className = "rvk-muted";
+            actualBody.appendChild(msg);
+          } else {
+            // Show only the candidates that were NOT selected by the LLM, grouped by source
+            const selectedNotations = selected ? selected.split("|").map((n) => n.trim()).filter(Boolean) : [];
+            const unselectedSru = sources.sru.filter((n) => !selectedNotations.includes(n));
+            const unselectedRvk = sources.rvk.filter((n) => !selectedNotations.includes(n));
+
+            const appendGroup = (label: string, notations: string[]) => {
+              const heading = mkDiv();
+              heading.textContent = label;
+              heading.className = "rvk-group-label";
+              actualBody.appendChild(heading);
+              const row = mkDiv();
+              row.setAttribute("style", "display:flex;flex-wrap:wrap;gap:4px;");
+              for (const n of notations) {
+                const chip = mkSpan();
+                chip.textContent = n;
+                chip.className = "rvk-chip";
+                row.appendChild(chip);
+              }
+              if (notations.length === 0) {
+                const none = mkSpan();
+                none.textContent = "(none)";
+                none.className = "rvk-muted";
+                row.appendChild(none);
+              }
+              actualBody.appendChild(row);
+            };
+
+            if (sources.sru.length > 0 || sources.rvk.length > 0) {
+              if (sources.sru.length > 0) appendGroup("From library catalogs (SRU):", unselectedSru);
+              if (sources.rvk.length > 0) appendGroup("From RVK keyword search:", unselectedRvk);
+            } else {
+              const msg = mkDiv();
+              msg.textContent = "(no other candidates)";
+              msg.className = "rvk-muted";
+              actualBody.appendChild(msg);
             }
-            body.appendChild(tags);
-          }
-          if (selected) {
-            const sel = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-            sel.setAttribute("style", "font-family:monospace;font-size:0.9em;");
-            sel.textContent = `Selected: ${selected}`;
-            body.appendChild(sel);
           }
         },
       });

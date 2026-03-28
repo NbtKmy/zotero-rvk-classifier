@@ -6,8 +6,10 @@ import { searchRVKByKeyword } from "./classifiers/rvk";
 const SYSTEM_PROMPT =
   "You are a library classification expert specializing in the Regensburger Verbundklassifikation (RVK) system.";
 
+export type CandidateSources = { sru: string[]; rvk: string[] };
+
 export type PredictionResult =
-  | { status: "ok"; notations: string[]; candidates: string[] }
+  | { status: "ok"; notations: string[]; candidates: CandidateSources }
   | { status: "no_result" }
   | { status: "error"; message: string };
 
@@ -21,7 +23,8 @@ export async function predict(
 
   try {
     // --- Step 1: gather candidate notations ---
-    let rawCandidates: string[] = [];
+    let sruCandidates: string[] = [];
+    let rvkCandidates: string[] = [];
 
     if (meta.isbn) {
       log(`ISBN: ${meta.isbn} — querying SRU sources`);
@@ -30,14 +33,14 @@ export async function predict(
       for (const xml of xmlList) {
         const found = classifier.extractFromMARC(xml);
         log(`  extracted ${found.length} notations: ${found.join(", ")}`);
-        rawCandidates.push(...found);
+        sruCandidates.push(...found);
       }
     } else {
       log(`No ISBN`);
     }
 
     // Fallback: LLM keyword → RVK node search
-    if (rawCandidates.length === 0) {
+    if (sruCandidates.length === 0) {
       log(`No SRU candidates — trying LLM keyword fallback`);
       const keywordResponse = await chatCompletion(llmConfig, [
         { role: "system", content: SYSTEM_PROMPT },
@@ -54,10 +57,11 @@ export async function predict(
       const keywordResults = await Promise.all(
         keywords.map((kw) => searchRVKByKeyword(kw))
       );
-      rawCandidates = keywordResults.flat();
-      log(`Keyword search candidates: ${rawCandidates.join(", ")}`);
+      rvkCandidates = keywordResults.flat();
+      log(`Keyword search candidates: ${rvkCandidates.join(", ")}`);
     }
 
+    const rawCandidates = [...sruCandidates, ...rvkCandidates];
     if (rawCandidates.length === 0) {
       log(`No candidates found — returning no_result`);
       return { status: "no_result" };
@@ -85,7 +89,17 @@ export async function predict(
       return { status: "no_result" };
     }
 
-    return { status: "ok", notations, candidates: enriched.map((c) => c.notation) };
+    // Preserve source info using the enriched notation order
+    const enrichedNotations = enriched.map((c) => c.notation);
+    const sruSet = new Set(sruCandidates);
+    return {
+      status: "ok",
+      notations,
+      candidates: {
+        sru: enrichedNotations.filter((n) => sruSet.has(n)),
+        rvk: enrichedNotations.filter((n) => !sruSet.has(n)),
+      },
+    };
   } catch (e) {
     return { status: "error", message: String(e) };
   }
