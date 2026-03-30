@@ -655,6 +655,10 @@ if (!body?.parentElement && ownerDoc) {
 - **`registerSection()` は `startup()` 内で同期的に呼ぶ** — `initializationPromise.then()` 内で呼ぶと遅延・コールバック未発火になる
 - **`querySelector` は XUL 名前空間 XML で不安定** — `getElementsByTagName` / `getElementsByTagNameNS` を優先すること
 
+### FTL localization changes require full Zotero restart
+
+Zotero caches FTL strings in memory. Changes to `.ftl` files (section headers, menu labels, etc.) are **not** picked up by reinstalling the plugin alone — a full Zotero restart is required.
+
 ### XML parsing (MARCXML)
 
 **`querySelectorAll` is unreliable with default-namespace XML in Gecko**

@@ -81,7 +81,15 @@ export async function predict(
     const notations = rerankResponse
       .split("|")
       .map((n) => n.trim())
-      .filter((n) => classifier.validate(n))
+      .map((token) => {
+        const idx = parseInt(token, 10);
+        if (!isNaN(idx) && idx >= 1 && idx <= enriched.length) {
+          return enriched[idx - 1].notation;
+        }
+        // fallback: token is already a notation string
+        return classifier.validate(token) ? token : null;
+      })
+      .filter((n): n is string => n !== null)
       .slice(0, 3);
     log(`Valid notations after filter: ${notations.join(", ")}`);
 

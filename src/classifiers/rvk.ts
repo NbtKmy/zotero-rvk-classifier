@@ -4,6 +4,43 @@ import { extractRVKFromMARC } from "../sru";
 const RVK_NODE_BASE = "https://rvk.uni-regensburg.de/api_neu/json/node/";
 const RVK_SEARCH_BASE = "https://rvk.uni-regensburg.de/api/xml/nodes/";
 
+// RVK Hauptgruppen (top-level classes) retrieved from the RVK API
+const RVK_HAUPTGRUPPEN = `\
+A       Allgemeines
+B       Theologie und Religionswissenschaften
+CA–CK   Philosophie
+CL–CZ   Psychologie
+D       Pädagogik
+E       Allgemeine und vergleichende Sprach- und Literaturwissenschaft; Indogermanistik; Außereuropäische Sprachen und Literaturen
+F       Klassische Philologie; Byzantinistik; Mittellateinische und Neugriechische Philologie; Neulatein
+G       Germanistik; Niederländische Philologie; Skandinavistik
+H       Anglistik; Amerikanistik
+I       Romanistik
+K       Slawistik; Baltistik; Fennistik
+LA–LC   Sozial- und Kulturanthropologie; Empirische Kulturwissenschaft
+LD–LG   Klassische Archäologie
+LH–LO   Kunstgeschichte
+LP–LY   Musikwissenschaft
+MA–ML   Politologie
+MN–MS   Soziologie
+MT      Gesundheitswissenschaften
+MX–MZ   Militärwissenschaften
+N       Geschichte
+P       Rechtswissenschaft
+Q       Wirtschaftswissenschaften
+R       Geographie
+SA–SP   Mathematik
+SQ–SU   Informatik
+TA–TD   Allgemeine Naturwissenschaften
+TE–TZ   Geowissenschaften
+U       Physik
+V       Chemie und Pharmazie
+W       Biologie
+X–Y     Medizin
+ZA–ZE   Land- und Forstwirtschaft; Gartenbau; Fischerei; Ernährungswissenschaft
+ZG–ZS   Technik
+ZX–ZY   Sportwissenschaft`;
+
 interface RVKNodeResponse {
   node: {
     notation: string;
@@ -67,7 +104,7 @@ export const rvkClassifier: Classifier = {
       n.trim().toUpperCase().replace(/\s+/, " ")
     );
     // Deduplicate and cap at 30 to limit RVK API calls
-    const unique = [...new Set(normalized)].slice(0, 30);
+    const unique = [...new Set(normalized)].slice(0, 15);
     return Promise.all(unique.map(fetchNodeDetail));
   },
 
@@ -86,15 +123,19 @@ export const rvkClassifier: Classifier = {
 
   rerankPrompt(meta: BookMetadata, candidates: EnrichedCandidate[], extraInstructions?: string): string {
     const candidateLines = candidates
-      .map((c) => {
+      .map((c, i) => {
         const terms = c.terms.length ? ` [${c.terms.join(", ")}]` : "";
-        return `- ${c.notation}: ${c.label}${terms}`;
+        return `${i + 1}. ${c.notation}: ${c.label}${terms}`;
       })
       .join("\n");
 
     const lines = [
       "Select and rank the 3 most appropriate RVK notations for the following book.",
-      "Return ONLY the 3 notations separated by \" | \" with no other text.",
+      "Choose ONLY from the numbered candidates listed below.",
+      "Return ONLY the 3 candidate numbers separated by \" | \" with no other text. Example: \"2 | 5 | 1\"",
+      "",
+      "RVK top-level classes (Hauptgruppen) — for context only, do NOT return these as answers:",
+      RVK_HAUPTGRUPPEN,
     ];
     if (extraInstructions) lines.push(extraInstructions);
     lines.push(

@@ -14,6 +14,7 @@ const CLASSIFIERS: Classifier[] = [rvkClassifier];
 class ZoteroRVKClassifier {
   private rootURI: string;
   private _candidates = new Map<number, CandidateSources>();
+  private _win: (Window & { document: Document }) | null = null;
 
   constructor(rootURI: string) {
     this.rootURI = rootURI;
@@ -53,143 +54,25 @@ class ZoteroRVKClassifier {
           }
         },
         onRender: ({ paneID, body, item }: { paneID?: string; body: HTMLElement; item: ZoteroItem | null }) => {
-          // Use ownerDocument (not global document — unavailable in IIFE bundle context)
           const ownerDoc = body?.ownerDocument;
-
-          // body passed by Zotero may be detached (disconnectedCallback clears light DOM children).
-          // Recover the live body from the DOM, or create a new one inside collapsible-section.
-          let actualBody: HTMLElement = body;
-          if (!body?.parentElement && ownerDoc) {
-            const allCustomSections = ownerDoc.getElementsByTagName("item-pane-custom-section");
-            let liveElem: Element | null = null;
-            for (let i = 0; i < allCustomSections.length; i++) {
-              const el = allCustomSections[i];
-              if (!paneID || el.getAttribute("data-pane") === paneID) {
-                liveElem = el;
-                break;
-              }
-            }
-
-            if (liveElem) {
-              // Try querySelector first (works once body has been inserted)
-              let liveBody = liveElem.querySelector?.('[data-type="body"]') as HTMLElement | null;
-
-              // If still missing, find collapsible-section and create the body div
-              if (!liveBody) {
-                const csArr = liveElem.getElementsByTagName("collapsible-section");
-                if (csArr.length > 0) {
-                  const cs = csArr[0];
-                  liveBody = (cs.children?.[1] ?? null) as HTMLElement | null;
-                  if (!liveBody) {
-                    // collapsible-section light DOM was cleared — recreate body slot child
-                    const newBody = ownerDoc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-                    newBody.setAttribute("data-type", "body");
-                    cs.appendChild(newBody);
-                    if (!cs.hasAttribute("open")) cs.setAttribute("open", "");
-                    cs.removeAttribute("empty");
-                    liveBody = newBody;
-                  }
-                }
-              }
-
-              if (liveBody) actualBody = liveBody;
-            }
-          }
-
-          const actualSection = actualBody.parentElement;
-          if (actualSection) {
-            actualSection.removeAttribute("empty");
-            if (!actualSection.hasAttribute("open")) {
-              actualSection.toggleAttribute("open", true);
-            }
-          }
-
-          const doc = actualBody.ownerDocument;
-          while (actualBody.firstChild) actualBody.removeChild(actualBody.firstChild);
-
-          // Inject stylesheet once per document for dark/light mode support
-          const styleId = "rvk-classifier-styles";
-          if (!doc.getElementById(styleId)) {
-            const style = doc.createElementNS("http://www.w3.org/1999/xhtml", "style");
-            style.id = styleId;
-            style.textContent = `
-              .rvk-chip {
-                background: #e0e0e0; color: #222;
-                border-radius: 3px; padding: 1px 6px;
-                font-family: monospace; font-size: 0.85em;
-              }
-              @media (prefers-color-scheme: dark) {
-                .rvk-chip { background: #4a4a4a; color: #e0e0e0; }
-              }
-              .rvk-group-label {
-                font-size: 0.8em; color: #666;
-                margin-top: 6px; margin-bottom: 2px;
-              }
-              @media (prefers-color-scheme: dark) {
-                .rvk-group-label { color: #aaa; }
-              }
-              .rvk-muted { color: #999; font-size: 0.85em; }
-              @media (prefers-color-scheme: dark) {
-                .rvk-muted { color: #777; }
-              }
-            `;
-            (doc.head ?? doc.documentElement)?.appendChild(style);
-          }
-
-          const extra = (item?.getField("extra") as string | undefined) ?? "";
-          const escapedKey = rvkClassifier.extraKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const match = extra.match(new RegExp(`^${escapedKey}:\\s*(.+)$`, "m"));
-          const selected = match?.[1]?.trim() ?? "";
           const itemId = (item as unknown as { id: number } | null)?.id;
           const sources = itemId != null ? candidatesRef.get(itemId) : undefined;
 
-          const mkDiv = () => doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-          const mkSpan = () => doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
-
-          if (!sources) {
-            // Candidates not cached (e.g. after Zotero restart) — prompt re-run
-            const msg = mkDiv();
-            msg.textContent = "Run classification again to see other candidates.";
-            msg.className = "rvk-muted";
-            actualBody.appendChild(msg);
-          } else {
-            // Show only the candidates that were NOT selected by the LLM, grouped by source
-            const selectedNotations = selected ? selected.split("|").map((n) => n.trim()).filter(Boolean) : [];
-            const unselectedSru = sources.sru.filter((n) => !selectedNotations.includes(n));
-            const unselectedRvk = sources.rvk.filter((n) => !selectedNotations.includes(n));
-
-            const appendGroup = (label: string, notations: string[]) => {
-              const heading = mkDiv();
-              heading.textContent = label;
-              heading.className = "rvk-group-label";
-              actualBody.appendChild(heading);
-              const row = mkDiv();
-              row.setAttribute("style", "display:flex;flex-wrap:wrap;gap:4px;");
-              for (const n of notations) {
-                const chip = mkSpan();
-                chip.textContent = n;
-                chip.className = "rvk-chip";
-                row.appendChild(chip);
-              }
-              if (notations.length === 0) {
-                const none = mkSpan();
-                none.textContent = "(none)";
-                none.className = "rvk-muted";
-                row.appendChild(none);
-              }
-              actualBody.appendChild(row);
-            };
-
-            if (sources.sru.length > 0 || sources.rvk.length > 0) {
-              if (sources.sru.length > 0) appendGroup("From library catalogs (SRU):", unselectedSru);
-              if (sources.rvk.length > 0) appendGroup("From RVK keyword search:", unselectedRvk);
-            } else {
-              const msg = mkDiv();
-              msg.textContent = "(no other candidates)";
-              msg.className = "rvk-muted";
-              actualBody.appendChild(msg);
-            }
+          if (sources) {
+            // disconnectedCallback has already run by the time onRender fires — write synchronously.
+            this._writeToSection(paneID, item, itemId!, sources);
+            return;
           }
+
+          // sources absent — recover body and show "run again" message immediately
+          const actualBody = this._recoverBody(paneID, body, ownerDoc);
+          if (!actualBody) return;
+          const doc = actualBody.ownerDocument;
+          while (actualBody.firstChild) actualBody.removeChild(actualBody.firstChild);
+          const msg = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+          msg.textContent = "Run classification again to see other candidates.";
+          msg.className = "rvk-muted";
+          actualBody.appendChild(msg);
         },
       });
     } catch (e) {
@@ -202,6 +85,7 @@ class ZoteroRVKClassifier {
   }
 
   onMainWindowLoad(win: Window): void {
+    this._win = win as Window & { document: Document };
     (win as unknown as { MozXULElement?: { insertFTLIfNeeded(id: string): void } })
       .MozXULElement?.insertFTLIfNeeded?.("zotero-rvk-classifier.ftl");
     const doc = (win as unknown as { document: Document }).document;
@@ -288,7 +172,138 @@ class ZoteroRVKClassifier {
       [""]
     );
     progress.startCloseTimer(5000);
+
+    // Directly write candidates to the section after saveTx() notifications settle.
+    // onRender is only triggered by user navigation, so we call _writeToSection directly.
+    if (success > 0) {
+      const win = this._win as unknown as Window;
+      win?.setTimeout?.(() => {
+        for (const item of items) {
+          const id = (item as unknown as { id: number }).id;
+          const sources = this._candidates.get(id);
+          if (sources) {
+            this._writeToSection("rvk-classifier-candidates", item, id, sources);
+            break;
+          }
+        }
+      }, 200);
+    }
   }
+
+  /** Recover or create the live body element inside a collapsible-section. */
+  private _recoverBody(paneID: string | undefined, body: HTMLElement, ownerDoc: Document | undefined): HTMLElement | null {
+    if (body?.parentElement) return body;
+    if (!ownerDoc) return body ?? null;
+
+    const allSections = ownerDoc.getElementsByTagName("item-pane-custom-section");
+    let liveElem: Element | null = null;
+    for (let i = 0; i < allSections.length; i++) {
+      const dataPaneValue = allSections[i].getAttribute("data-pane") ?? "";
+      if (!paneID || dataPaneValue === paneID || dataPaneValue.endsWith(`-${paneID}`)) {
+        liveElem = allSections[i];
+        break;
+      }
+    }
+    if (!liveElem) return body ?? null;
+
+    let liveBody = liveElem.querySelector?.('[data-type="body"]') as HTMLElement | null;
+    if (!liveBody) {
+      const csArr = liveElem.getElementsByTagName("collapsible-section");
+      if (csArr.length > 0) {
+        const cs = csArr[0];
+        liveBody = (cs.children?.[1] ?? null) as HTMLElement | null;
+        if (!liveBody) {
+          const newBody = ownerDoc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+          newBody.setAttribute("data-type", "body");
+          cs.appendChild(newBody);
+          if (!cs.hasAttribute("open")) cs.setAttribute("open", "");
+          cs.removeAttribute("empty");
+          liveBody = newBody;
+        }
+      }
+    }
+
+    const result = liveBody ?? body;
+    const section = result?.parentElement;
+    if (section) {
+      section.removeAttribute("empty");
+      if (!section.hasAttribute("open")) section.toggleAttribute("open", true);
+    }
+    return result;
+  }
+
+  /** Write candidate chips to the section body (called deferred, after disconnectedCallback). */
+  private _writeToSection(paneID: string | undefined, item: ZoteroItem | null, itemId: number, sources: CandidateSources): void {
+    const doc = (this._win as unknown as { document: Document })?.document;
+    if (!doc) return;
+
+    const body = this._recoverBody(paneID, null as unknown as HTMLElement, doc);
+    if (!body) return;
+
+    // Inject stylesheet once per document
+    const styleId = "rvk-classifier-styles";
+    if (!doc.getElementById(styleId)) {
+      const style = doc.createElementNS("http://www.w3.org/1999/xhtml", "style");
+      style.id = styleId;
+      style.textContent = `
+        .rvk-chip { background:#e0e0e0; color:#222; border-radius:3px; padding:1px 6px; font-family:monospace; font-size:0.85em; }
+        @media (prefers-color-scheme:dark) { .rvk-chip { background:#4a4a4a; color:#e0e0e0; } }
+        .rvk-group-label { font-size:0.8em; color:#666; margin-top:6px; margin-bottom:2px; }
+        @media (prefers-color-scheme:dark) { .rvk-group-label { color:#aaa; } }
+        .rvk-muted { color:#999; font-size:0.85em; }
+        @media (prefers-color-scheme:dark) { .rvk-muted { color:#777; } }
+      `;
+      (doc.head ?? doc.documentElement)?.appendChild(style);
+    }
+
+    const extra = (item?.getField("extra") as string | undefined) ?? "";
+    const escapedKey = rvkClassifier.extraKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = extra.match(new RegExp(`^${escapedKey}:\\s*(.+)$`, "m"));
+    const selected = match?.[1]?.trim() ?? "";
+    const selectedNotations = selected ? selected.split("|").map((n) => n.trim()).filter(Boolean) : [];
+
+    while (body.firstChild) body.removeChild(body.firstChild);
+
+    const mkDiv = () => doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+    const mkSpan = () => doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
+
+    const appendGroup = (label: string, notations: string[]) => {
+      const heading = mkDiv();
+      heading.textContent = label;
+      heading.className = "rvk-group-label";
+      body.appendChild(heading);
+      const row = mkDiv();
+      row.setAttribute("style", "display:flex;flex-wrap:wrap;gap:4px;");
+      for (const n of notations) {
+        const chip = mkSpan();
+        chip.textContent = n;
+        chip.className = "rvk-chip";
+        row.appendChild(chip);
+      }
+      if (notations.length === 0) {
+        const none = mkSpan();
+        none.textContent = "(none)";
+        none.className = "rvk-muted";
+        row.appendChild(none);
+      }
+      body.appendChild(row);
+    };
+
+    const unselectedSru = sources.sru.filter((n) => !selectedNotations.includes(n));
+    const unselectedRvk = sources.rvk.filter((n) => !selectedNotations.includes(n));
+
+    if (sources.sru.length > 0 || sources.rvk.length > 0) {
+      if (sources.sru.length > 0) appendGroup("From library catalogs (SRU):", unselectedSru);
+      if (sources.rvk.length > 0) appendGroup("From RVK keyword search:", unselectedRvk);
+    } else {
+      const msg = mkDiv();
+      msg.textContent = "(no other candidates)";
+      msg.className = "rvk-muted";
+      body.appendChild(msg);
+    }
+  }
+
+
 }
 
 function extractMetadata(item: ZoteroItem): BookMetadata {

@@ -13,7 +13,7 @@ export async function chatCompletion(
         "Content-Type": "application/json",
         ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
       },
-      body: JSON.stringify({ model: config.model, messages }),
+      body: JSON.stringify({ model: config.model, messages, temperature: 0 }),
     }
   );
   if (resp.status !== 200) {
