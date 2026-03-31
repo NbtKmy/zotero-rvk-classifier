@@ -1,14 +1,14 @@
 {
   "manifest_version": 2,
   "name": "RVK Classifier",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Predict RVK classification notations for books using an LLM",
   "author": "NbtKmy",
   "applications": {
     "zotero": {
       "id": "zotero-rvk-classifier@nbtkmy.org",
-      "strict_min_version": "7.0",
-      "strict_max_version": "7.0.*",
+      "strict_min_version": "8.0",
+      "strict_max_version": "8.0.*",
       "update_url": "https://raw.githubusercontent.com/NbtKmy/zotero-rvk-classifier/main/update.json"
     }
   }

@@ -343,7 +343,7 @@ ${line}` : line;
           },
           sidenav: {
             l10nID: "rvk-classifier-section-sidenav",
-            icon: `${rootURI}addon/content/icons/rvk.svg`
+            icon: `${rootURI}addon/content/icons/rvk-sidenav.svg`
           },
           onItemChange: ({ item, setEnabled, setSectionSummary }) => {
             const extra = item?.getField("extra") ?? "";
@@ -353,26 +353,41 @@ ${line}` : line;
               const escapedKey = rvkClassifier.extraKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
               const match = extra.match(new RegExp(`^${escapedKey}:\\s*(.+)$`, "m"));
               setSectionSummary(match?.[1]?.trim() ?? "");
+              const itemRef = item;
+              const itemId = item?.id;
+              const win = this._win;
+              win?.setTimeout?.(() => {
+                const sources = itemId != null ? candidatesRef.get(itemId) : void 0;
+                this._writeToSection("rvk-classifier-candidates", itemRef, itemId, sources);
+              }, 200);
             }
+            return hasResult;
           },
-          onRender: ({ paneID, body, item }) => {
-            const ownerDoc = body?.ownerDocument;
-            const itemId = item?.id;
-            const sources = itemId != null ? candidatesRef.get(itemId) : void 0;
-            if (sources) {
-              this._writeToSection(paneID, item, itemId, sources);
-              return;
+          onRender: (props) => {
+            try {
+              const body = props?.body;
+              const item = props?.item ?? null;
+              const paneID = props?.paneID;
+              const ownerDoc = props?.doc ?? body?.ownerDocument ?? this._win?.document;
+              const actualBody = this._recoverBody(paneID, body, ownerDoc);
+              if (!actualBody)
+                return;
+              const itemId = item?.id;
+              const sources = itemId != null ? candidatesRef.get(itemId) : void 0;
+              if (sources) {
+                this._renderContent(actualBody, item, sources);
+              } else {
+                while (actualBody.firstChild)
+                  actualBody.removeChild(actualBody.firstChild);
+                const doc2 = actualBody.ownerDocument;
+                const msg = doc2.createElementNS("http://www.w3.org/1999/xhtml", "div");
+                msg.textContent = "Run classification again to see other candidates.";
+                msg.className = "rvk-muted";
+                actualBody.appendChild(msg);
+              }
+            } catch (e) {
+              Zotero.log?.(`[rvk-classifier] onRender error: ${e}`);
             }
-            const actualBody = this._recoverBody(paneID, body, ownerDoc);
-            if (!actualBody)
-              return;
-            const doc = actualBody.ownerDocument;
-            while (actualBody.firstChild)
-              actualBody.removeChild(actualBody.firstChild);
-            const msg = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-            msg.textContent = "Run classification again to see other candidates.";
-            msg.className = "rvk-muted";
-            actualBody.appendChild(msg);
           }
         });
       } catch (e) {
@@ -385,32 +400,25 @@ ${line}` : line;
     onMainWindowLoad(win) {
       this._win = win;
       win.MozXULElement?.insertFTLIfNeeded?.("zotero-rvk-classifier.ftl");
-      const doc = win.document;
-      if (doc.readyState === "complete") {
-        this._registerMenus(doc);
-      } else {
-        win.addEventListener("load", () => this._registerMenus(doc), { once: true });
+      this._registerMenus();
+    }
+    _registerMenus() {
+      for (const classifier of CLASSIFIERS) {
+        Zotero.MenuManager.registerMenu({
+          menuID: `${PLUGIN_ID}-predict-${classifier.id}`,
+          pluginID: PLUGIN_ID,
+          target: "main/library/item",
+          menus: [
+            {
+              menuType: "menuitem",
+              l10nID: `rvk-classifier-menu-predict-${classifier.id}`,
+              onCommand: () => this.runClassifier(classifier)
+            }
+          ]
+        });
       }
     }
-    _registerMenus(doc) {
-      const itemmenu = doc.getElementById("zotero-itemmenu");
-      if (!itemmenu)
-        return;
-      const createEl = (tag) => doc.createXULElement ? doc.createXULElement(tag) : doc.createElementNS("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul", tag);
-      for (const classifier of CLASSIFIERS) {
-        const menuID = `${PLUGIN_ID}-predict-${classifier.id}`;
-        const menuitem = createEl("menuitem");
-        menuitem.id = menuID;
-        menuitem.setAttribute("label", `Predict classification (${classifier.label})`);
-        menuitem.addEventListener("command", () => this.runClassifier(classifier));
-        itemmenu.appendChild(menuitem);
-      }
-    }
-    onMainWindowUnload(win) {
-      const doc = win.document;
-      for (const classifier of CLASSIFIERS) {
-        doc.getElementById(`${PLUGIN_ID}-predict-${classifier.id}`)?.remove();
-      }
+    onMainWindowUnload(_win) {
     }
     getLLMConfig() {
       return {
@@ -420,6 +428,7 @@ ${line}` : line;
       };
     }
     async runClassifier(classifier) {
+      Zotero.log?.(`[rvk] runClassifier start win=${this._win ? "ok" : "NULL"}`);
       const items = Zotero.getActiveZoteroPane().getSelectedItems().filter((item) => item.itemType === "book");
       if (items.length === 0)
         return;
@@ -465,7 +474,7 @@ ${line}` : line;
               break;
             }
           }
-        }, 200);
+        }, 1500);
       }
     }
     /** Recover or create the live body element inside a collapsible-section. */
@@ -485,6 +494,8 @@ ${line}` : line;
       }
       if (!liveElem)
         return body ?? null;
+      liveElem.removeAttribute("empty");
+      liveElem.removeAttribute("hidden");
       let liveBody = liveElem.querySelector?.('[data-type="body"]');
       if (!liveBody) {
         const csArr = liveElem.getElementsByTagName("collapsible-section");
@@ -511,7 +522,7 @@ ${line}` : line;
       }
       return result;
     }
-    /** Write candidate chips to the section body (called deferred, after disconnectedCallback). */
+    /** Write content to the section body (called deferred, after disconnectedCallback cycle). */
     _writeToSection(paneID, item, itemId, sources) {
       const doc = this._win?.document;
       if (!doc)
@@ -519,6 +530,20 @@ ${line}` : line;
       const body = this._recoverBody(paneID, null, doc);
       if (!body)
         return;
+      if (sources) {
+        this._renderContent(body, item, sources);
+      } else {
+        while (body.firstChild)
+          body.removeChild(body.firstChild);
+        const msg = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+        msg.textContent = "Run classification again to see other candidates.";
+        msg.className = "rvk-muted";
+        body.appendChild(msg);
+      }
+    }
+    /** Render candidate chips into a body element. */
+    _renderContent(body, item, sources) {
+      const doc = body.ownerDocument;
       const styleId = "rvk-classifier-styles";
       if (!doc.getElementById(styleId)) {
         const style = doc.createElementNS("http://www.w3.org/1999/xhtml", "style");

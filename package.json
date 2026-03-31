@@ -1,6 +1,6 @@
 {
   "name": "zotero-rvk-classifier",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Predict RVK classification notations for books using an LLM",
   "scripts": {
     "build": "tsc && node build.mjs",

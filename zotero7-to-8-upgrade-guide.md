@@ -981,7 +981,20 @@ zotero-price-lookup-menu-label =
 
 XUL `menuitem` labels must be set via the `.label` attribute in Fluent, not as a message value.
 
-### 21.4 `Zotero.ProgressWindow` — call `show()` before `startCloseTimer()`
+### 21.4 `ItemPaneManager.registerSection` — `setEnabled(false)` sets `hidden="true"`, not `[empty]`
+
+**Problem:** In Zotero 7, hiding a custom section was controlled by the `[empty]` attribute on `item-pane-custom-section`. In Zotero 8, `setEnabled(false)` instead sets `hidden="true"` on the element. Code that only removes `[empty]` to re-show the section will silently fail.
+
+**Context:** `setEnabled` can only be called inside `onItemChange`, which fires on user-initiated item clicks — NOT when `item.saveTx()` is called. So after running classification and saving, the section remains hidden because `setEnabled(true)` was never called for the current item.
+
+**Fix:** When manually making the section visible via DOM manipulation (e.g., from a setTimeout after `saveTx()`), remove BOTH attributes:
+
+```typescript
+liveElem.removeAttribute("hidden");  // Zotero 8: setEnabled(false) sets this
+liveElem.removeAttribute("empty");   // also remove empty to ensure visibility
+```
+
+### 21.5 `Zotero.ProgressWindow` — call `show()` before `startCloseTimer()`
 
 **Wrong:**
 ```javascript

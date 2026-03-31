@@ -2,7 +2,7 @@
  * Loaded via loadSubScript before DOM insertion — do NOT access DOM here.
  * Use onload/oncommand handlers instead. */
 
-var Zotero_RVKPrefs = {
+window.Zotero_RVKPrefs = {
   PREF_BASE: "extensions.zotero-rvk-classifier",
 
   init() {

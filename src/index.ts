@@ -41,9 +41,9 @@ class ZoteroRVKClassifier {
         },
         sidenav: {
           l10nID: "rvk-classifier-section-sidenav",
-          icon: `${rootURI}addon/content/icons/rvk.svg`,
+          icon: `${rootURI}addon/content/icons/rvk-sidenav.svg`,
         },
-        onItemChange: ({ item, setEnabled, setSectionSummary }: { item: ZoteroItem | null; setEnabled: (v: boolean) => void; setSectionSummary: (s: string) => void }) => {
+        onItemChange: ({ item, setEnabled, setSectionSummary }: { item: ZoteroItem | null; setEnabled: (v: boolean) => void; setSectionSummary: (s: string) => void }): boolean | void => {
           const extra = (item?.getField("extra") as string | undefined) ?? "";
           const hasResult = extra.includes(`${rvkClassifier.extraKey}:`);
           setEnabled(hasResult);
@@ -51,28 +51,39 @@ class ZoteroRVKClassifier {
             const escapedKey = rvkClassifier.extraKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const match = extra.match(new RegExp(`^${escapedKey}:\\s*(.+)$`, "m"));
             setSectionSummary(match?.[1]?.trim() ?? "");
+            const itemRef = item;
+            const itemId = (item as unknown as { id: number })?.id;
+            const win = this._win as unknown as Window;
+            win?.setTimeout?.(() => {
+              const sources = itemId != null ? candidatesRef.get(itemId) : undefined;
+              this._writeToSection("rvk-classifier-candidates", itemRef, itemId, sources);
+            }, 200);
           }
+          return hasResult;
         },
-        onRender: ({ paneID, body, item }: { paneID?: string; body: HTMLElement; item: ZoteroItem | null }) => {
-          const ownerDoc = body?.ownerDocument;
-          const itemId = (item as unknown as { id: number } | null)?.id;
-          const sources = itemId != null ? candidatesRef.get(itemId) : undefined;
-
-          if (sources) {
-            // disconnectedCallback has already run by the time onRender fires — write synchronously.
-            this._writeToSection(paneID, item, itemId!, sources);
-            return;
+        onRender: (props?: { body?: HTMLElement; item?: ZoteroItem | null; paneID?: string; doc?: Document }): void => {
+          try {
+            const body = props?.body as HTMLElement | undefined;
+            const item = props?.item ?? null;
+            const paneID = props?.paneID;
+            const ownerDoc = props?.doc ?? body?.ownerDocument ?? (this._win as unknown as { document: Document })?.document;
+            const actualBody = this._recoverBody(paneID, body as HTMLElement, ownerDoc);
+            if (!actualBody) return;
+            const itemId = (item as unknown as { id: number })?.id;
+            const sources = itemId != null ? candidatesRef.get(itemId) : undefined;
+            if (sources) {
+              this._renderContent(actualBody, item, sources);
+            } else {
+              while (actualBody.firstChild) actualBody.removeChild(actualBody.firstChild);
+              const doc2 = actualBody.ownerDocument;
+              const msg = doc2.createElementNS("http://www.w3.org/1999/xhtml", "div");
+              msg.textContent = "Run classification again to see other candidates.";
+              msg.className = "rvk-muted";
+              actualBody.appendChild(msg);
+            }
+          } catch (e) {
+            Zotero.log?.(`[rvk-classifier] onRender error: ${e}`);
           }
-
-          // sources absent — recover body and show "run again" message immediately
-          const actualBody = this._recoverBody(paneID, body, ownerDoc);
-          if (!actualBody) return;
-          const doc = actualBody.ownerDocument;
-          while (actualBody.firstChild) actualBody.removeChild(actualBody.firstChild);
-          const msg = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-          msg.textContent = "Run classification again to see other candidates.";
-          msg.className = "rvk-muted";
-          actualBody.appendChild(msg);
         },
       });
     } catch (e) {
@@ -88,38 +99,32 @@ class ZoteroRVKClassifier {
     this._win = win as Window & { document: Document };
     (win as unknown as { MozXULElement?: { insertFTLIfNeeded(id: string): void } })
       .MozXULElement?.insertFTLIfNeeded?.("zotero-rvk-classifier.ftl");
-    const doc = (win as unknown as { document: Document }).document;
-    if (doc.readyState === "complete") {
-      this._registerMenus(doc);
-    } else {
-      win.addEventListener("load", () => this._registerMenus(doc), { once: true });
+    this._registerMenus();
+  }
+
+  private _registerMenus(): void {
+    for (const classifier of CLASSIFIERS) {
+      (Zotero as unknown as {
+        MenuManager: {
+          registerMenu(opts: object): void;
+        };
+      }).MenuManager.registerMenu({
+        menuID: `${PLUGIN_ID}-predict-${classifier.id}`,
+        pluginID: PLUGIN_ID,
+        target: "main/library/item",
+        menus: [
+          {
+            menuType: "menuitem",
+            l10nID: `rvk-classifier-menu-predict-${classifier.id}`,
+            onCommand: () => this.runClassifier(classifier),
+          },
+        ],
+      });
     }
   }
 
-  private _registerMenus(doc: Document): void {
-    const itemmenu = doc.getElementById("zotero-itemmenu");
-    if (!itemmenu) return;
-
-    const createEl = (tag: string): Element =>
-      (doc as unknown as { createXULElement?: (tag: string) => Element }).createXULElement
-        ? (doc as unknown as { createXULElement: (tag: string) => Element }).createXULElement(tag)
-        : doc.createElementNS("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul", tag);
-
-    for (const classifier of CLASSIFIERS) {
-      const menuID = `${PLUGIN_ID}-predict-${classifier.id}`;
-      const menuitem = createEl("menuitem");
-      menuitem.id = menuID;
-      menuitem.setAttribute("label", `Predict classification (${classifier.label})`);
-      menuitem.addEventListener("command", () => this.runClassifier(classifier));
-      itemmenu.appendChild(menuitem);
-    }
-  }
-
-  onMainWindowUnload(win: Window): void {
-    const doc = (win as unknown as { document: Document }).document;
-    for (const classifier of CLASSIFIERS) {
-      doc.getElementById(`${PLUGIN_ID}-predict-${classifier.id}`)?.remove();
-    }
+  onMainWindowUnload(_win: Window): void {
+    // Zotero.MenuManager automatically removes registered menus on plugin shutdown.
   }
 
   private getLLMConfig(): LLMConfig {
@@ -131,6 +136,7 @@ class ZoteroRVKClassifier {
   }
 
   private async runClassifier(classifier: Classifier): Promise<void> {
+    Zotero.log?.(`[rvk] runClassifier start win=${this._win ? "ok" : "NULL"}`);
     const items = Zotero.getActiveZoteroPane()
       .getSelectedItems()
       .filter((item) => item.itemType === "book");
@@ -173,8 +179,6 @@ class ZoteroRVKClassifier {
     );
     progress.startCloseTimer(5000);
 
-    // Directly write candidates to the section after saveTx() notifications settle.
-    // onRender is only triggered by user navigation, so we call _writeToSection directly.
     if (success > 0) {
       const win = this._win as unknown as Window;
       win?.setTimeout?.(() => {
@@ -186,7 +190,7 @@ class ZoteroRVKClassifier {
             break;
           }
         }
-      }, 200);
+      }, 1500);
     }
   }
 
@@ -196,6 +200,7 @@ class ZoteroRVKClassifier {
     if (!ownerDoc) return body ?? null;
 
     const allSections = ownerDoc.getElementsByTagName("item-pane-custom-section");
+
     let liveElem: Element | null = null;
     for (let i = 0; i < allSections.length; i++) {
       const dataPaneValue = allSections[i].getAttribute("data-pane") ?? "";
@@ -205,6 +210,8 @@ class ZoteroRVKClassifier {
       }
     }
     if (!liveElem) return body ?? null;
+    liveElem.removeAttribute("empty");
+    liveElem.removeAttribute("hidden");
 
     let liveBody = liveElem.querySelector?.('[data-type="body"]') as HTMLElement | null;
     if (!liveBody) {
@@ -232,13 +239,26 @@ class ZoteroRVKClassifier {
     return result;
   }
 
-  /** Write candidate chips to the section body (called deferred, after disconnectedCallback). */
-  private _writeToSection(paneID: string | undefined, item: ZoteroItem | null, itemId: number, sources: CandidateSources): void {
+  /** Write content to the section body (called deferred, after disconnectedCallback cycle). */
+  private _writeToSection(paneID: string | undefined, item: ZoteroItem | null, itemId: number, sources: CandidateSources | undefined): void {
     const doc = (this._win as unknown as { document: Document })?.document;
     if (!doc) return;
-
     const body = this._recoverBody(paneID, null as unknown as HTMLElement, doc);
     if (!body) return;
+    if (sources) {
+      this._renderContent(body, item, sources);
+    } else {
+      while (body.firstChild) body.removeChild(body.firstChild);
+      const msg = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      msg.textContent = "Run classification again to see other candidates.";
+      msg.className = "rvk-muted";
+      body.appendChild(msg);
+    }
+  }
+
+  /** Render candidate chips into a body element. */
+  private _renderContent(body: HTMLElement, item: ZoteroItem | null, sources: CandidateSources): void {
+    const doc = body.ownerDocument;
 
     // Inject stylesheet once per document
     const styleId = "rvk-classifier-styles";

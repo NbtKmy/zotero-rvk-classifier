@@ -39,9 +39,9 @@ export type ZoteroType = {
       sidenav: { l10nID: string; icon: string; darkIcon?: string };
       bodyXHTML?: string;
       onInit?: (props: { body: HTMLElement; item: ZoteroItem | null; refresh: () => Promise<void> }) => void;
-      onItemChange?: (props: { item: ZoteroItem | null; setEnabled: (v: boolean) => void; setSectionSummary: (s: string) => void }) => void;
-      onRender?: (props: { body: HTMLElement; item: ZoteroItem | null }) => void;
-      onAsyncRender?: (props: { body: HTMLElement; item: ZoteroItem | null }) => Promise<void>;
+      onItemChange?: (props: { paneID?: string; doc?: Document; body?: HTMLElement; item: ZoteroItem | null; setEnabled: (v: boolean) => void; setSectionSummary: (s: string) => void }) => boolean | void;
+      onRender?: (props: { paneID?: string; doc?: Document; body: HTMLElement; item: ZoteroItem | null }) => void;
+      onAsyncRender?: (props: { paneID?: string; doc?: Document; body: HTMLElement; item: ZoteroItem | null }) => Promise<void>;
       onDestroy?: (props: Record<string, unknown>) => void;
     }): void;
   };
