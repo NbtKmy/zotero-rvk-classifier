@@ -1,6 +1,6 @@
 # zotero-rvk-classifier
 
-A [Zotero 7](https://www.zotero.org/) plugin that predicts [RVK](https://rvk.uni-regensburg.de) (Regensburger Verbundklassifikation) classification notations for books using a local or cloud LLM.
+A [Zotero 8](https://www.zotero.org/) plugin that predicts [RVK](https://rvk.uni-regensburg.de) (Regensburger Verbundklassifikation) classification notations for books using a local or cloud LLM.
 
 ## Features
 
