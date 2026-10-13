@@ -29,7 +29,6 @@ npm-debug.log*
 
 # Non-project files
 *.potx
-zip.mjs
 zotero-plugin-pitfalls.md
 zotero7-to-8-upgrade-guide.md
 
