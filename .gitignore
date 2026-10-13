@@ -29,6 +29,9 @@ npm-debug.log*
 
 # Non-project files
 *.potx
+zip.mjs
+zotero-plugin-pitfalls.md
+zotero7-to-8-upgrade-guide.md
 
 # Presentation: only the exported PDF is tracked (source, theme and template assets stay local)
 presentation/*
