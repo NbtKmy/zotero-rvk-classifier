@@ -1,8 +1,8 @@
 import { Classifier, BookMetadata, EnrichedCandidate } from "../types";
 import { extractRVKFromMARC } from "../sru";
 
-const RVK_NODE_BASE = "https://rvk.uni-regensburg.de/api_neu/json/node/";
-const RVK_SEARCH_BASE = "https://rvk.uni-regensburg.de/api/xml/nodes/";
+const RVK_NODE_BASE = "https://rvk.ur.de/api3/json/notation/nodeNt/";
+const RVK_SEARCH_BASE = "https://rvk.ur.de/api3/json/notation/nodes/";
 
 // RVK Hauptgruppen (top-level classes) retrieved from the RVK API
 const RVK_HAUPTGRUPPEN = `\
@@ -41,52 +41,89 @@ ZA–ZE   Land- und Forstwirtschaft; Gartenbau; Fischerei; Ernährungswissenscha
 ZG–ZS   Technik
 ZX–ZY   Sportwissenschaft`;
 
-interface RVKNodeResponse {
-  node: {
-    notation: string;
-    benennung: string;
-    register?: string | string[];
-  };
+interface RVKRegisterEntry {
+  begriff: string;
 }
 
-async function fetchNodeDetail(notation: string): Promise<EnrichedCandidate> {
+interface RVKNode {
+  notation: string;
+  benennung?: string;
+  // nodeNt uses "register", nodes uses "Register"
+  register?: RVKRegisterEntry | RVKRegisterEntry[];
+  Register?: RVKRegisterEntry | RVKRegisterEntry[];
+}
+
+interface RVKResponse {
+  // single object (nodeNt) or array (nodes); absent on errors ("error-code")
+  node?: RVKNode | RVKNode[];
+}
+
+function registerTerms(node: RVKNode): string[] {
+  const register = node.register ?? node.Register ?? [];
+  const entries = Array.isArray(register) ? register : [register];
+  return entries.map((e) => e.begriff).filter(Boolean);
+}
+
+// Notation → node data, kept for the lifetime of the plugin (until Zotero restarts or the
+// plugin is reloaded) so repeated notations don't hit the RVK API again.
+// Only successful lookups are cached; failures are retried on the next request.
+const nodeCache = new Map<string, EnrichedCandidate>();
+
+/** Returns null if the node could not be retrieved. */
+async function fetchNodeDetail(notation: string): Promise<EnrichedCandidate | null> {
   try {
-    const url = `${RVK_NODE_BASE}${encodeURIComponent(notation)}?json`;
+    const url = `${RVK_NODE_BASE}${encodeURIComponent(notation)}`;
     const resp = await Zotero.HTTP.request("GET", url, { timeout: 8000 });
-    if (resp.status !== 200) return { notation, label: "", terms: [] };
-    const data: RVKNodeResponse = JSON.parse(resp.responseText);
-    const register = data.node.register ?? [];
-    const terms = Array.isArray(register) ? register : [register];
-    return { notation, label: data.node.benennung ?? "", terms };
+    if (resp.status !== 200) return null;
+    const data: RVKResponse = JSON.parse(resp.responseText);
+    const node = Array.isArray(data.node) ? data.node[0] : data.node;
+    if (!node) return null;
+    return { notation, label: node.benennung ?? "", terms: registerTerms(node) };
   } catch {
-    return { notation, label: "", terms: [] };
+    return null;
   }
 }
 
+async function lookupNode(notation: string): Promise<EnrichedCandidate> {
+  const cached = nodeCache.get(notation);
+  if (cached) return cached;
+  const fetched = await fetchNodeDetail(notation);
+  if (!fetched) return { notation, label: "", terms: [] };
+  nodeCache.set(notation, fetched);
+  return fetched;
+}
+
 /**
- * Search RVK nodes by a German keyword.
- * Returns notation strings found in the XML response.
+ * Search RVK nodes by a German keyword (matches Benennung and Register entries).
+ * The response already carries Benennung and Register, so the nodes are returned
+ * fully enriched — no follow-up detail request is needed for them.
  */
-export async function searchRVKByKeyword(keyword: string): Promise<string[]> {
+export async function searchRVKByKeyword(keyword: string): Promise<EnrichedCandidate[]> {
   try {
     const url = `${RVK_SEARCH_BASE}${encodeURIComponent(keyword)}`;
     const resp = await Zotero.HTTP.request("GET", url, { timeout: 8000 });
     if (resp.status !== 200) return [];
-    const xml = resp.responseText;
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xml, "application/xml");
-    const notations: string[] = [];
-    for (const node of Array.from(doc.getElementsByTagNameNS("*", "node"))) {
-      const n = node.getAttribute("notation");
-      if (n && !n.includes("-")) {
-        // skip range nodes like "UO 4000 - UO 4100"
-        notations.push(n.trim());
-      }
-    }
-    return notations;
+    // "no match" is answered with a non-JSON error body → JSON.parse throws → []
+    const data: RVKResponse = JSON.parse(resp.responseText);
+    const nodes = Array.isArray(data.node) ? data.node : data.node ? [data.node] : [];
+    const candidates = nodes
+      // skip range nodes like "UO 4000 - UO 4100"
+      .filter((n) => n.notation && !n.notation.includes("-"))
+      .map((n) => ({
+        notation: normalizeNotation(n.notation),
+        label: n.benennung ?? "",
+        terms: registerTerms(n),
+      }));
+    for (const c of candidates) nodeCache.set(c.notation, c);
+    return candidates;
   } catch {
     return [];
   }
+}
+
+// Uppercase, collapse internal whitespace to single space, trim
+function normalizeNotation(n: string): string {
+  return n.trim().toUpperCase().replace(/\s+/, " ");
 }
 
 export const rvkClassifier: Classifier = {
@@ -98,14 +135,17 @@ export const rvkClassifier: Classifier = {
     return extractRVKFromMARC(xml);
   },
 
-  async enrichCandidates(notations: string[]): Promise<EnrichedCandidate[]> {
-    // Normalize: uppercase, collapse internal whitespace to single space, trim
-    const normalized = notations.map((n) =>
-      n.trim().toUpperCase().replace(/\s+/, " ")
+  async enrichCandidates(
+    notations: string[],
+    known: EnrichedCandidate[] = []
+  ): Promise<EnrichedCandidate[]> {
+    const knownByNotation = new Map(known.map((c) => [c.notation, c]));
+    // Deduplicate and cap at 15 to limit RVK API calls
+    const unique = [...new Set(notations.map(normalizeNotation))].slice(0, 15);
+    // Only notations without data (not passed in, not cached) go to the RVK API
+    return Promise.all(
+      unique.map((n) => knownByNotation.get(n) ?? lookupNode(n))
     );
-    // Deduplicate and cap at 30 to limit RVK API calls
-    const unique = [...new Set(normalized)].slice(0, 15);
-    return Promise.all(unique.map(fetchNodeDetail));
   },
 
   keywordPrompt(meta: BookMetadata): string {

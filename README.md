@@ -45,7 +45,7 @@ ollama pull qwen2.5:3b   # fast, multilingual
 
 1. **ISBN lookup** — queries 6 German-speaking library catalogs in parallel via SRU/Z39.50 and extracts RVK notations from MARCXML (field 084)
 2. **Keyword fallback** — if no ISBN or no results, asks the LLM to generate German RVK search terms and queries the [RVK API](https://rvk.uni-regensburg.de/Portal_API/)
-3. **Enrichment** — fetches human-readable labels and index terms for each candidate notation from the RVK API
+3. **Enrichment** — fetches human-readable labels and index terms for each catalog-derived candidate notation from the RVK API (candidates found via keyword search already include them, so no extra request is made)
 4. **Re-ranking** — asks the LLM to select and rank the 3 best notations given the book metadata and enriched candidates
 
 ## Development

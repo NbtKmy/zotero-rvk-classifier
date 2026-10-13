@@ -1,4 +1,4 @@
-import { Classifier, BookMetadata, LLMConfig } from "./types";
+import { Classifier, BookMetadata, EnrichedCandidate, LLMConfig } from "./types";
 import { chatCompletion } from "./llm";
 import { fetchMARCXMLByISBN } from "./sru";
 import { searchRVKByKeyword } from "./classifiers/rvk";
@@ -24,7 +24,7 @@ export async function predict(
   try {
     // --- Step 1: gather candidate notations ---
     let sruCandidates: string[] = [];
-    let rvkCandidates: string[] = [];
+    let rvkCandidates: EnrichedCandidate[] = [];
 
     if (meta.isbn) {
       log(`ISBN: ${meta.isbn} — querying SRU sources`);
@@ -58,17 +58,17 @@ export async function predict(
         keywords.map((kw) => searchRVKByKeyword(kw))
       );
       rvkCandidates = keywordResults.flat();
-      log(`Keyword search candidates: ${rvkCandidates.join(", ")}`);
+      log(`Keyword search candidates: ${rvkCandidates.map((c) => c.notation).join(", ")}`);
     }
 
-    const rawCandidates = [...sruCandidates, ...rvkCandidates];
+    const rawCandidates = [...sruCandidates, ...rvkCandidates.map((c) => c.notation)];
     if (rawCandidates.length === 0) {
       log(`No candidates found — returning no_result`);
       return { status: "no_result" };
     }
 
-    // --- Step 2: enrich candidates ---
-    const enriched = await classifier.enrichCandidates(rawCandidates);
+    // --- Step 2: enrich candidates (keyword-search hits already carry label/terms) ---
+    const enriched = await classifier.enrichCandidates(rawCandidates, rvkCandidates);
     log(`Enriched ${enriched.length} candidates`);
 
     // --- Step 3: LLM re-rank ---

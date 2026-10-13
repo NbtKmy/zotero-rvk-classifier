@@ -360,8 +360,7 @@ Warning: Some Notations in this fields are not normalized.
 #### RVK Data
 
 # RVK API
-RVK_API    = "https://rvk.uni-regensburg.de/api_neu/json/node/"
-RVK_SUFFIX = "?json"
+RVK_API    = "https://rvk.ur.de/api3/json/notation/"
 
 Dokumentation: https://rvk.uni-regensburg.de/Portal_API/
 
@@ -372,15 +371,15 @@ Two endpoints are used:
 
 **1. Node detail by notation** — to enrich candidate notations with human-readable labels and index terms:
 ```
-GET https://rvk.uni-regensburg.de/api_neu/json/node/{notation}?json
+GET https://rvk.ur.de/api3/json/notation/nodeNt/{notation}
 ```
-Returns: `notation`, `benennung` (German label), `has_children`, `register` (index terms)
+Returns: `node` object with `notation`, `benennung` (German label), `has_children`, `register` (array of `{begriff, gndnummer}`). Unknown notation → HTTP 200 with `error-code` and no `node`.
 
 **2. Node search by keyword** — to find candidate notations from a German keyword:
 ```
-GET https://rvk.uni-regensburg.de/api/xml/nodes/{keyword}
+GET https://rvk.ur.de/api3/json/notation/nodes/{keyword}
 ```
-Returns: list of nodes, each with `notation`, `benennung`, `register` (XML format)
+Searches Benennungen and Register entries. Returns: `node` array, each with `notation`, `benennung`, `Register` (capital R; array of `{begriff, gndnr}`; absent on range nodes like `UO 4000 - UO 4100`). No match → non-JSON error body.
 
 Documentation: https://rvk.uni-regensburg.de/Portal_API/
 
@@ -397,7 +396,7 @@ For each selected book item:
      │         → candidate notations list
      │
      └─ NO  → LLM call ①: generate 3–5 German keywords for RVK search
-              → Query /api/xml/nodes/{keyword} for each keyword
+              → Query /api3/json/notation/nodes/{keyword} for each keyword
               → Extract notations from XML results
               → candidate notations list
 
@@ -405,8 +404,9 @@ For each selected book item:
      ├─ NO  → setExtraField(item, 'Predicted classes', 'no result')
      │         await item.saveTx() → done
      │
-     └─ YES → Enrich each candidate: GET /api_neu/json/node/{notation}?json
+     └─ YES → Enrich each candidate: GET /api3/json/notation/nodeNt/{notation}
               → attach benennung + register terms to each candidate
+              (candidates from the keyword search already carry both → no extra request)
 
   4. LLM call ②: re-rank candidates and select top 3
      → Input: book metadata + enriched candidate list

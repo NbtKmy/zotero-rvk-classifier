@@ -17,7 +17,8 @@ export interface Classifier {
   label: string;
   extraKey: string;
   extractFromMARC(xml: string): string[];
-  enrichCandidates(notations: string[]): Promise<EnrichedCandidate[]>;
+  // `known`: candidates that already carry label/terms (skips the lookup for them)
+  enrichCandidates(notations: string[], known?: EnrichedCandidate[]): Promise<EnrichedCandidate[]>;
   keywordPrompt(meta: BookMetadata): string;
   rerankPrompt(meta: BookMetadata, candidates: EnrichedCandidate[], extraInstructions?: string): string;
   validate(notation: string): boolean;
