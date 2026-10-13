@@ -29,3 +29,7 @@ npm-debug.log*
 
 # Non-project files
 *.potx
+
+# Presentation: only the exported PDF is tracked (source, theme and template assets stay local)
+presentation/*
+!presentation/slides.pdf
